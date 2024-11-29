@@ -4,19 +4,30 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/MeMetoCoco3/goserver/internal/database"
-	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
+
+	"github.com/MeMetoCoco3/goserver/internal/database"
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
-	dbQueries      *database.Queries
+	db             *database.Queries
+	who            string
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -50,6 +61,8 @@ func main() {
 
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
+	devEnv := os.Getenv("PLATFORM")
+
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		fmt.Println(err)
@@ -60,20 +73,18 @@ func main() {
 
 	cfg := apiConfig{
 		fileserverHits: atomic.Int32{},
-		dbQueries:      dbQueries,
+		db:             dbQueries,
+		who:            devEnv,
 	}
 
 	handler := http.NewServeMux()
 
 	fileServer := http.FileServer(http.Dir("."))
 
+	//----------/app/---------------
 	handler.Handle(frontPath, http.StripPrefix(frontPath, middlewareLog(cfg.middlewareMetricsInc(fileServer))))
 
-	handler.Handle(fmt.Sprintf("GET %shealthz", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write([]byte("OK"))
-	}))
+	//----------/admin/metrics/---------------
 	handler.Handle(fmt.Sprintf("GET %smetrics", adminPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -88,14 +99,24 @@ func main() {
 			count)))
 	}))
 
+	//----------/admin/reset/---------------
 	handler.Handle(fmt.Sprintf("POST %sreset", adminPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
 		_ = cfg.fileserverHits.Swap(0)
+
+		if cfg.who != "dev" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+
+		cfg.db.DeleteUsers(r.Context())
+
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		count := cfg.fileserverHits.Load()
 		w.Write([]byte(fmt.Sprintf("Hits: %d", count)))
 	}))
 
+	//----------/api/validate_chirp---------------
 	handler.Handle(fmt.Sprintf("POST %svalidate_chirp", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
 		type Req struct {
 			Body string `json:"body"`
@@ -142,10 +163,40 @@ func main() {
 		return
 	}))
 
+	//----------/api/healthz/---------------
+	handler.Handle(fmt.Sprintf("GET %shealthz", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte("OK"))
+	}))
+
 	server := http.Server{
 		Handler: handler,
 		Addr:    ":8080",
 	}
+	//--------------/api/users/-------------------------
+	handler.Handle(fmt.Sprintf("POST %susers", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
+		user := User{}
+		err := json.NewDecoder(r.Body).Decode(&user)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
+		userUpdated, err := cfg.db.CreateUser(r.Context(), user.Email)
+		user = User{
+			ID:        userUpdated.ID,
+			CreatedAt: userUpdated.CreatedAt,
+			UpdatedAt: userUpdated.UpdatedAt,
+			Email:     userUpdated.Email,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		if err = json.NewEncoder(w).Encode(user); err != nil {
+			http.Error(w, `{"error": "Failed to encode json data."}`, http.StatusInternalServerError)
+		}
+	}))
 
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Server Failed to start: %v", err)
