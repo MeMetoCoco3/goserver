@@ -8,5 +8,4 @@ VALUES(
 )
 	RETURNING *;
 
--- name: DeleteUsers :exec
-TRUNCATE TABLE USERS;
+

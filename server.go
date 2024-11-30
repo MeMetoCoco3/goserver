@@ -75,10 +75,14 @@ func main() {
 
 		if cfg.who != "dev" {
 			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte("Reset is only allowed in dev environment."))
 			return
 		}
 
-		cfg.db.DeleteUsers(r.Context())
+		if err := cfg.db.DeleteUsers(r.Context()); err != nil {
+			http.Error(w, fmt.Sprintf(`"error":"%s"`, err), http.StatusInternalServerError)
+			return
+		}
 
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -127,6 +131,7 @@ func main() {
 			return
 		}
 
+		fmt.Printf("%s %s", req.Body, req.UserID)
 		if req.Body, err = validateChirp(req.Body); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusNotAcceptable)
 			return
@@ -136,7 +141,6 @@ func main() {
 			Body:   req.Body,
 			UserID: req.UserID,
 		})
-
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
 			return
@@ -155,6 +159,32 @@ func main() {
 			http.Error(w, fmt.Sprintf(`"error":"%s"`, err), http.StatusInternalServerError)
 			return
 		}
+	}))
+
+	handler.Handle(fmt.Sprintf("GET %schirps", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
+
+		chirps := make([]Chirp, 0)
+		newChirps, err := cfg.db.GetChirps(r.Context())
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+		for _, chirp := range newChirps {
+			chirps = append(chirps, Chirp{
+				ID:        chirp.ID,
+				CreatedAt: chirp.CreatedAt,
+				UpdatedAt: chirp.UpdatedAt,
+				Body:      chirp.Body,
+				UserID:    chirp.UserID,
+			})
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		if err = json.NewEncoder(w).Encode(chirps); err != nil {
+			http.Error(w, fmt.Sprintf(`"error":"%s"`, err), http.StatusInternalServerError)
+			return
+		}
+
 	}))
 
 	server := http.Server{

@@ -10,7 +10,7 @@ VALUES(
 RETURNING *;
 
 -- name: GetChirps :many
-SELECT * FROM chirps;
+SELECT * FROM chirps ORDER BY created_at ASC;
 
 -- name: DeleteChirps :exec
-TRUNCATE TABLE chirps;
+TRUNCATE TABLE chirps CASCADE;
