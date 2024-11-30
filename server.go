@@ -9,10 +9,8 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/MeMetoCoco3/goserver/internal/database"
-	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -23,13 +21,6 @@ type apiConfig struct {
 	who            string
 }
 
-type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-}
-
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg.fileserverHits.Add(1)
@@ -37,28 +28,7 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	})
 }
 
-func middlewareLog(next interface{}) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("Log: %s %s %s\n", r.Method, r.URL.Path, r.Host)
-
-		switch h := next.(type) {
-		case http.Handler:
-			h.ServeHTTP(w, r)
-		case http.HandlerFunc:
-			h(w, r)
-		case func(http.ResponseWriter, *http.Request):
-			h(w, r)
-		default:
-			log.Printf("Unsupported handler type")
-		}
-	})
-}
-
 func main() {
-	const frontPath = "/app/"
-	const backPath = "/api/"
-	const adminPath = "/admin/"
-
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	devEnv := os.Getenv("PLATFORM")
@@ -123,11 +93,6 @@ func main() {
 		w.Write([]byte("OK"))
 	}))
 
-	server := http.Server{
-		Handler: handler,
-		Addr:    ":8080",
-	}
-
 	//--------------/api/users/-------------------------
 	handler.Handle(fmt.Sprintf("POST %susers", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
 		user := User{}
@@ -155,21 +120,6 @@ func main() {
 
 	// ------------/api/chirps/---------------------
 	handler.Handle(fmt.Sprintf("POST %schirps", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
-		type Req struct {
-			Body   string    `json:"body"`
-			UserID uuid.UUID `json:"user_id"`
-		}
-		type Resp struct {
-			CleanedBody string `json:"cleaned_body"`
-		}
-		type Chirp struct {
-			ID        uuid.UUID `json:"id"`
-			CreatedAt time.Time `json:"created_at"`
-			UpdatedAt time.Time `json:"updated_at"`
-			Body      string    `json:"body"`
-			UserID    uuid.UUID `json:"user_id"`
-		}
-
 		req := Req{}
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
@@ -206,6 +156,11 @@ func main() {
 			return
 		}
 	}))
+
+	server := http.Server{
+		Handler: handler,
+		Addr:    ":8080",
+	}
 
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Server Failed to start: %v", err)
