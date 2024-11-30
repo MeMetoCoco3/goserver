@@ -116,53 +116,6 @@ func main() {
 		w.Write([]byte(fmt.Sprintf("Hits: %d", count)))
 	}))
 
-	//----------/api/validate_chirp---------------
-	handler.Handle(fmt.Sprintf("POST %svalidate_chirp", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
-		type Req struct {
-			Body string `json:"body"`
-		}
-		type Resp struct {
-			CleanedBody string `json:"cleaned_body"`
-		}
-
-		decoder := json.NewDecoder(r.Body)
-		req := Req{}
-		err := decoder.Decode(&req)
-		w.Header().Set("Content-Type", "application/json")
-		if err != nil {
-			fmt.Printf("Error Decoding parameters: %s\n", err)
-			w.WriteHeader(500)
-			w.Write([]byte(`"error":"Something went wrong`))
-			return
-		}
-		if len(req.Body) > 140 {
-			w.WriteHeader(400)
-			w.Write([]byte(`"error":"Chirp is too long"`))
-			return
-		}
-
-		badWords := map[string]struct{}{
-			"kerfuffle": {},
-			"sharbert":  {},
-			"fornax":    {},
-		}
-		words := strings.Fields(req.Body)
-
-		for i, word := range words {
-			lowerCaseWord := strings.ToLower(word)
-			if _, ok := badWords[lowerCaseWord]; ok {
-				words[i] = "****"
-			}
-		}
-		resp := Resp{
-			CleanedBody: strings.Join(words, " "),
-		}
-
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
-		return
-	}))
-
 	//----------/api/healthz/---------------
 	handler.Handle(fmt.Sprintf("GET %shealthz", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -174,6 +127,7 @@ func main() {
 		Handler: handler,
 		Addr:    ":8080",
 	}
+
 	//--------------/api/users/-------------------------
 	handler.Handle(fmt.Sprintf("POST %susers", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
 		user := User{}
@@ -195,10 +149,87 @@ func main() {
 		w.WriteHeader(http.StatusCreated)
 		if err = json.NewEncoder(w).Encode(user); err != nil {
 			http.Error(w, `{"error": "Failed to encode json data."}`, http.StatusInternalServerError)
+			return
+		}
+	}))
+
+	// ------------/api/chirps/---------------------
+	handler.Handle(fmt.Sprintf("POST %schirps", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
+		type Req struct {
+			Body   string    `json:"body"`
+			UserID uuid.UUID `json:"user_id"`
+		}
+		type Resp struct {
+			CleanedBody string `json:"cleaned_body"`
+		}
+		type Chirp struct {
+			ID        uuid.UUID `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Body      string    `json:"body"`
+			UserID    uuid.UUID `json:"user_id"`
+		}
+
+		req := Req{}
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, `{"error": "Failed to decode body."}`, http.StatusInternalServerError)
+			return
+		}
+
+		if req.Body, err = validateChirp(req.Body); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusNotAcceptable)
+			return
+		}
+
+		newChirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
+			Body:   req.Body,
+			UserID: req.UserID,
+		})
+
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+		chirp := Chirp{
+			ID:        newChirp.ID,
+			CreatedAt: newChirp.CreatedAt,
+			UpdatedAt: newChirp.UpdatedAt,
+			Body:      newChirp.Body,
+			UserID:    newChirp.UserID,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		if err = json.NewEncoder(w).Encode(chirp); err != nil {
+			http.Error(w, fmt.Sprintf(`"error":"%s"`, err), http.StatusInternalServerError)
+			return
 		}
 	}))
 
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Server Failed to start: %v", err)
 	}
+}
+
+func validateChirp(chirp string) (string, error) {
+	if len(chirp) > 140 {
+		return "", fmt.Errorf("Too long chirp")
+	}
+
+	badWords := map[string]struct{}{
+		"kerfuffle": {},
+		"sharbert":  {},
+		"fornax":    {},
+	}
+	words := strings.Fields(chirp)
+
+	for i, word := range words {
+		lowerCaseWord := strings.ToLower(word)
+		if _, ok := badWords[lowerCaseWord]; ok {
+			words[i] = "****"
+		}
+	}
+	return strings.Join(words, " "), nil
+
 }
