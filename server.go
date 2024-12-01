@@ -143,12 +143,6 @@ func main() {
 
 	// ------------/api/chirps/---------------------
 	handler.Handle(fmt.Sprintf("POST %schirps", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
-		req := Req{}
-		err := json.NewDecoder(r.Body).Decode(&req)
-		if err != nil {
-			http.Error(w, `{"error": "Failed to decode body."}`, http.StatusInternalServerError)
-			return
-		}
 		token, err := auth.GetBearerToken(r.Header)
 		fmt.Printf("%s\n", token)
 		if err != nil {
@@ -157,17 +151,23 @@ func main() {
 		}
 
 		uuID, err := auth.ValidateJWT(token, cfg.jwtSecret)
-		fmt.Printf("Validation: %v\n", uuID)
 		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error2":"%s"}`, err), http.StatusUnauthorized)
+			fmt.Printf("Error in validation JWT\n Token: %s", token)
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusUnauthorized)
+			return
+		}
+
+		req := Req{}
+		err = json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, `{"error": "Failed to decode body."}`, http.StatusInternalServerError)
 			return
 		}
 
 		if req.Body, err = validateChirp(req.Body); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusNotAcceptable)
+			http.Error(w, fmt.Sprintf(`{"error3":"%s"}`, err), http.StatusNotAcceptable)
 			return
 		}
-
 		newChirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 			Body:   req.Body,
 			UserID: uuID,
@@ -246,6 +246,57 @@ func main() {
 		}
 	}))
 
+	//-------------/api/revoke/-----------------
+	handler.Handle(fmt.Sprintf("%srevoke", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		_, err = cfg.db.DeleteRefreshToken(r.Context(), string(token))
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}))
+
+	//-------------/api/refresh/-----------------
+	handler.Handle(fmt.Sprintf("%srefresh", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		tokenData, err := cfg.db.GetRefreshToken(r.Context(), string(token))
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+		user, err := cfg.db.GetUserWithToken(r.Context(), tokenData.Token)
+		if err != nil {
+			http.Error(w, `{"error":"Couldn't get user for refresh token"}`, http.StatusUnauthorized)
+			return
+		}
+		accessToken, err := auth.MakeJWT(
+			user.ID,
+			cfg.jwtSecret,
+			time.Hour,
+		)
+		if err != nil {
+			http.Error(w, `{"error":"Couldnt validate token."}`, http.StatusUnauthorized)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`{"token":"%s"}`, accessToken)))
+		return
+	}))
 	//-------------/api/login/-----------------
 	handler.Handle(fmt.Sprintf("%slogin", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
 		u := User{}
@@ -258,7 +309,6 @@ func main() {
 		if u.ExpiresInSeconds == 0 || u.ExpiresInSeconds > defaultExpSeconds {
 			u.ExpiresInSeconds = defaultExpSeconds
 		}
-		fmt.Printf("Seconds %v\n", u.ExpiresInSeconds)
 
 		user, err := cfg.db.GetUser(r.Context(), u.Email)
 		if err != nil {
@@ -277,23 +327,36 @@ func main() {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
 			return
 		}
-
+		refreshToken, err := auth.MakeRefreshToken()
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
 
 		u = User{
-			ID:        user.ID,
-			CreatedAt: user.CreatedAt,
-			UpdatedAt: user.UpdatedAt,
-			Email:     user.Email,
-			Token:     token,
+			ID:           user.ID,
+			CreatedAt:    user.CreatedAt,
+			UpdatedAt:    user.UpdatedAt,
+			Email:        user.Email,
+			Token:        token,
+			RefreshToken: refreshToken,
+		}
+		_, err = cfg.db.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+			Token:     refreshToken,
+			UserID:    user.ID,
+			ExpiresAt: time.Now().UTC().Add(time.Hour * 24 * 60),
+		})
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
 		}
 
 		if err = json.NewEncoder(w).Encode(&u); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
 			return
 		}
-
 	}))
 
 	server := http.Server{

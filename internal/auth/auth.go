@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -33,34 +35,30 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	token, err := jwt.ParseWithClaims(
 		tokenString,
 		&claimsStruct,
-		func(token *jwt.Token) (interface{}, error) {
-			return []byte(tokenSecret), nil
-		},
+		func(token *jwt.Token) (interface{}, error) { return []byte(tokenSecret), nil },
 	)
-	fmt.Printf("Token: %v\n Error: %v\n", token, err)
+	fmt.Println(err)
+	if err != nil {
+		return uuid.Nil, err
+	}
 
+	userIDString, err := token.Claims.GetSubject()
+	fmt.Printf("UserIDString: %s\n", userIDString)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	fmt.Println("Mark1")
-	userID, err := token.Claims.GetSubject()
-	if err != nil {
-		return uuid.Nil, err
-	}
-	fmt.Println("Mark2")
 
 	issuer, err := token.Claims.GetIssuer()
+	fmt.Printf("Issuer: %s\n", issuer)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	fmt.Println("Mark3")
-
 	if issuer != string(TokenTypeAccess) {
 		return uuid.Nil, errors.New("invalid issuer")
 	}
-	fmt.Println("Mark4")
 
-	id, err := uuid.Parse(userID)
+	id, err := uuid.Parse(userIDString)
+	fmt.Printf("Parsed ID: %v\n", id)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("invalid user ID: %w", err)
 	}
@@ -79,6 +77,15 @@ func GetBearerToken(headers http.Header) (string, error) {
 	}
 
 	return splitAuth[1], nil
+}
+
+func MakeRefreshToken() (string, error) {
+	buff := make([]byte, 32)
+	_, err := rand.Read(buff)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buff), nil
 }
 
 func HashPassword(password string) (string, error) {

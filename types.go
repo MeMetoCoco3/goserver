@@ -18,6 +18,7 @@ type User struct {
 	HashedPassword   string      `json:"password"`
 	ExpiresInSeconds int         `json:"expires_in_seconds"`
 	Token            interface{} `json:"token"`
+	RefreshToken     string      `json:"refresh_token"`
 }
 
 type Req struct {
