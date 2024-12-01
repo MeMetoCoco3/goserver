@@ -9,7 +9,9 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/MeMetoCoco3/goserver/internal/auth"
 	"github.com/MeMetoCoco3/goserver/internal/database"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -19,6 +21,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	db             *database.Queries
 	who            string
+	jwtSecret      string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -32,7 +35,7 @@ func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
 	devEnv := os.Getenv("PLATFORM")
-
+	jwtS := os.Getenv("JWT_SECRET")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		fmt.Println(err)
@@ -45,8 +48,8 @@ func main() {
 		fileserverHits: atomic.Int32{},
 		db:             dbQueries,
 		who:            devEnv,
+		jwtSecret:      jwtS,
 	}
-
 	handler := http.NewServeMux()
 
 	fileServer := http.FileServer(http.Dir("."))
@@ -79,11 +82,7 @@ func main() {
 			return
 		}
 
-		if err := cfg.db.DeleteUsers(r.Context()); err != nil {
-			http.Error(w, fmt.Sprintf(`"error":"%s"`, err), http.StatusInternalServerError)
-			return
-		}
-
+		cfg.db.DeleteUsers(r.Context())
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		count := cfg.fileserverHits.Load()
@@ -99,19 +98,39 @@ func main() {
 
 	//--------------/api/users/-------------------------
 	handler.Handle(fmt.Sprintf("POST %susers", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
-		user := User{}
-		err := json.NewDecoder(r.Body).Decode(&user)
+		type Req struct {
+			Email          string `json:"email"`
+			HashedPassword string `json:"password"`
+		}
+
+		req := Req{}
+		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 
-		userUpdated, err := cfg.db.CreateUser(r.Context(), user.Email)
-		user = User{
-			ID:        userUpdated.ID,
-			CreatedAt: userUpdated.CreatedAt,
-			UpdatedAt: userUpdated.UpdatedAt,
-			Email:     userUpdated.Email,
+		if req.HashedPassword == "" {
+			http.Error(w, `"error":"No password on request."`, http.StatusNotAcceptable)
+			return
+		}
+
+		hashedPassword, err := auth.HashPassword(req.HashedPassword)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		userUpdated, err := cfg.db.CreateUser(r.Context(), database.CreateUserParams{
+			Email:          req.Email,
+			HashedPassword: hashedPassword,
+		})
+		user := User{
+			ID:             userUpdated.ID,
+			CreatedAt:      userUpdated.CreatedAt,
+			UpdatedAt:      userUpdated.UpdatedAt,
+			Email:          userUpdated.Email,
+			HashedPassword: userUpdated.HashedPassword,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -130,8 +149,20 @@ func main() {
 			http.Error(w, `{"error": "Failed to decode body."}`, http.StatusInternalServerError)
 			return
 		}
+		token, err := auth.GetBearerToken(r.Header)
+		fmt.Printf("%s\n", token)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusUnauthorized)
+			return
+		}
 
-		fmt.Printf("%s %s", req.Body, req.UserID)
+		uuID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+		fmt.Printf("Validation: %v\n", uuID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error2":"%s"}`, err), http.StatusUnauthorized)
+			return
+		}
+
 		if req.Body, err = validateChirp(req.Body); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusNotAcceptable)
 			return
@@ -139,7 +170,7 @@ func main() {
 
 		newChirp, err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 			Body:   req.Body,
-			UserID: req.UserID,
+			UserID: uuID,
 		})
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
@@ -156,7 +187,7 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		if err = json.NewEncoder(w).Encode(chirp); err != nil {
-			http.Error(w, fmt.Sprintf(`"error":"%s"`, err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
 			return
 		}
 	}))
@@ -181,7 +212,85 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
 		if err = json.NewEncoder(w).Encode(chirps); err != nil {
-			http.Error(w, fmt.Sprintf(`"error":"%s"`, err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+	}))
+
+	handler.Handle(fmt.Sprintf("GET %schirps/{id}", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
+		u, err := stringToUUID(r.PathValue("id"))
+
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s}"`, err), http.StatusInternalServerError)
+		}
+
+		newChirp, err := cfg.db.GetChirp(r.Context(), u)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusNotFound)
+		}
+
+		chirp := Chirp{
+			ID:        newChirp.ID,
+			CreatedAt: newChirp.CreatedAt,
+			UpdatedAt: newChirp.UpdatedAt,
+			Body:      newChirp.Body,
+			UserID:    newChirp.UserID,
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		if err = json.NewEncoder(w).Encode(chirp); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+	}))
+
+	//-------------/api/login/-----------------
+	handler.Handle(fmt.Sprintf("%slogin", backPath), middlewareLog(func(w http.ResponseWriter, r *http.Request) {
+		u := User{}
+		err := json.NewDecoder(r.Body).Decode(&u)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		if u.ExpiresInSeconds == 0 || u.ExpiresInSeconds > defaultExpSeconds {
+			u.ExpiresInSeconds = defaultExpSeconds
+		}
+		fmt.Printf("Seconds %v\n", u.ExpiresInSeconds)
+
+		user, err := cfg.db.GetUser(r.Context(), u.Email)
+		if err != nil {
+			http.Error(w, `{"error":"Incorrect email"}`, http.StatusUnauthorized)
+			return
+		}
+
+		err = auth.CheckPasswordHash(user.HashedPassword, u.HashedPassword)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"Incorrect email or password, %s"}`, err), http.StatusUnauthorized)
+			return
+		}
+
+		token, err := auth.MakeJWT(user.ID, cfg.jwtSecret, time.Duration(u.ExpiresInSeconds))
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+
+		u = User{
+			ID:        user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+			Email:     user.Email,
+			Token:     token,
+		}
+
+		if err = json.NewEncoder(w).Encode(&u); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
 			return
 		}
 
