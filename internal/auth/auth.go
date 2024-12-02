@@ -65,15 +65,21 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	return id, nil
 }
 
+var (
+	ErrNoTokenString       = errors.New("there is no token string")
+	ErrInvalidBearerFormat = errors.New("not correctly formatted BearerToken")
+)
+
 func GetBearerToken(headers http.Header) (string, error) {
+
 	authHeader := headers.Get("Authorization")
 	if authHeader == "" {
-		return "", fmt.Errorf("There is not token String")
+		return "", ErrNoTokenString
 	}
 	splitAuth := strings.Split(authHeader, " ")
 
 	if len(splitAuth) < 2 || splitAuth[0] != "Bearer" {
-		return "", fmt.Errorf("Not correctly formated BearerToken")
+		return "", ErrInvalidBearerFormat
 	}
 
 	return splitAuth[1], nil
