@@ -22,3 +22,6 @@ UPDATE users SET hashed_password = $1 WHERE users.id = $2;
 -- name: SetNewEmail :exec
 UPDATE users SET email = $1 WHERE users.id = $2;
 
+-- name: SetRedUser :one
+UPDATE users SET is_chirpy_red = true WHERE users.id = $1
+RETURNING *;

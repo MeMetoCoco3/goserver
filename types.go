@@ -19,6 +19,7 @@ type User struct {
 	ExpiresInSeconds int         `json:"expires_in_seconds"`
 	Token            interface{} `json:"token"`
 	RefreshToken     string      `json:"refresh_token"`
+	IsRed            bool        `json:"is_chirpy_red"`
 }
 
 type Req struct {

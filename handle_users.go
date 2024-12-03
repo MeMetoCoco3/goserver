@@ -42,6 +42,7 @@ func (cfg *apiConfig) handlePostUser(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:      userUpdated.UpdatedAt,
 		Email:          userUpdated.Email,
 		HashedPassword: userUpdated.HashedPassword,
+		IsRed:          userUpdated.IsChirpyRed,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -118,6 +119,7 @@ func (cfg *apiConfig) handlePutUser(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:      userUpdated.UpdatedAt,
 		Email:          userUpdated.Email,
 		HashedPassword: userUpdated.HashedPassword,
+		IsRed:          userUpdated.IsChirpyRed,
 	}
 
 	if err = json.NewEncoder(w).Encode(user); err != nil {

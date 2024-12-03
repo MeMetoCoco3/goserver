@@ -62,11 +62,12 @@ func main() {
 	handler.Handle(fmt.Sprintf("POST %schirps", backPath), middlewareLog(cfg.handlePostChirp))
 	handler.Handle(fmt.Sprintf("GET %schirps", backPath), middlewareLog(cfg.handleGetChirps))
 	handler.Handle(fmt.Sprintf("GET %schirps/{id}", backPath), middlewareLog(cfg.handleGetChirp))
+	handler.Handle(fmt.Sprintf("DELETE %schirps/{id}", backPath), middlewareLog(cfg.handleDeleteChirps))
 
-	handler.Handle(fmt.Sprintf("%srevoke", backPath), middlewareLog(cfg.handleRevoke))
-	handler.Handle(fmt.Sprintf("%srefresh", backPath), middlewareLog(cfg.handlerRefresh))
+	handler.Handle(fmt.Sprintf("POST %srevoke", backPath), middlewareLog(cfg.handleRevoke))
+	handler.Handle(fmt.Sprintf("POST %srefresh", backPath), middlewareLog(cfg.handlerRefresh))
 	handler.Handle(fmt.Sprintf("POST %slogin", backPath), middlewareLog(cfg.handlerLogin))
-
+	handler.Handle(fmt.Sprintf("POST %spolka/webhooks", backPath), middlewareLog(cfg.handlerWebhook))
 	server := http.Server{
 		Handler: handler,
 		Addr:    ":8080",

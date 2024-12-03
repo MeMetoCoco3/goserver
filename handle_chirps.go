@@ -109,6 +109,40 @@ func (cfg *apiConfig) handlePostChirp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (cfg *apiConfig) handleDeleteChirps(w http.ResponseWriter, r *http.Request) {
+	chirpID, err := stringToUUID(r.PathValue("id"))
+
+	chirpData, err := cfg.db.GetChirp(r.Context(), chirpID)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to get chirp data."}`, http.StatusNotFound)
+		return
+	}
+
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to get bearer token."}`, http.StatusUnauthorized)
+		return
+	}
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to get bearer token."}`, http.StatusUnauthorized)
+		return
+	}
+
+	if userID != chirpData.UserID {
+		http.Error(w, `{"error": "User not allowed to procede with delete."}`, 403)
+		return
+	}
+
+	err = cfg.db.DeleteChirpByID(r.Context(), chirpID)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to delete chirp."}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func validateChirp(chirp string) (string, error) {
 	if len(chirp) > 140 {
 		return "", fmt.Errorf("Too long chirp")
