@@ -12,10 +12,21 @@ import (
 
 func (cfg *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 	chirps := make([]Chirp, 0)
-
+	newChirps := []database.Chirp{}
 	authorID := r.URL.Query().Get("author_id")
+	orderBy := r.URL.Query().Get("sort")
+
 	if authorID == "" {
-		newChirps, err := cfg.db.GetChirps(r.Context())
+		var err error
+		if orderBy == "asc" || orderBy == "" {
+			newChirps, err = cfg.db.GetChirps(r.Context())
+		} else if orderBy == "desc" {
+			newChirps, err = cfg.db.GetChirpsDesc(r.Context())
+		} else {
+			http.Error(w, `{"error":"Not correct query parameter."}`, http.StatusInternalServerError)
+			return
+
+		}
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
 			return
@@ -36,7 +47,18 @@ func (cfg *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
 			return
 		}
-		newChirps, err := cfg.db.GetChirpByAuthor(r.Context(), authorUUID)
+		if orderBy == "asc" || orderBy == "" {
+			newChirps, err = cfg.db.GetChirpByAuthor(r.Context(), authorUUID)
+		} else if orderBy == "desc" {
+			newChirps, err = cfg.db.GetChirpByAuthorDesc(r.Context(), authorUUID)
+		} else {
+			http.Error(w, `{"error":"Not correct query parameter."}`, http.StatusInternalServerError)
+			return
+		}
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
 		for _, chirp := range newChirps {
 			chirps = append(chirps, Chirp{
 				ID:        chirp.ID,

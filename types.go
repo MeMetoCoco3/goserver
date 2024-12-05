@@ -9,6 +9,8 @@ const frontPath = "/app/"
 const backPath = "/api/"
 const adminPath = "/admin/"
 const defaultExpSeconds = 3600
+const ASC = "ASC"
+const DESC = "DESC"
 
 type User struct {
 	ID               uuid.UUID   `json:"id"`
