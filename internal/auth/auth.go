@@ -70,6 +70,21 @@ var (
 	ErrInvalidBearerFormat = errors.New("not correctly formatted BearerToken")
 )
 
+func GetAPIKey(headers http.Header) (string, error) {
+	authHeader := headers.Get("Authorization")
+	fmt.Println(authHeader)
+	if authHeader == "" {
+		return "", ErrNoTokenString
+	}
+	splitAuth := strings.Split(authHeader, " ")
+	fmt.Println(splitAuth)
+	if len(splitAuth) < 2 || splitAuth[0] != "ApiKey" {
+		return "", ErrInvalidBearerFormat
+	}
+
+	return splitAuth[1], nil
+}
+
 func GetBearerToken(headers http.Header) (string, error) {
 
 	authHeader := headers.Get("Authorization")

@@ -5,29 +5,52 @@ import (
 	"fmt"
 	"github.com/MeMetoCoco3/goserver/internal/auth"
 	"github.com/MeMetoCoco3/goserver/internal/database"
+	"github.com/google/uuid"
 	"net/http"
 	"strings"
 )
 
 func (cfg *apiConfig) handleGetChirps(w http.ResponseWriter, r *http.Request) {
 	chirps := make([]Chirp, 0)
-	newChirps, err := cfg.db.GetChirps(r.Context())
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
-		return
+
+	authorID := r.URL.Query().Get("author_id")
+	if authorID == "" {
+		newChirps, err := cfg.db.GetChirps(r.Context())
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+		for _, chirp := range newChirps {
+			chirps = append(chirps, Chirp{
+				ID:        chirp.ID,
+				CreatedAt: chirp.CreatedAt,
+				UpdatedAt: chirp.UpdatedAt,
+				Body:      chirp.Body,
+				UserID:    chirp.UserID,
+			})
+		}
+
+	} else {
+		authorUUID, err := uuid.Parse(authorID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
+			return
+		}
+		newChirps, err := cfg.db.GetChirpByAuthor(r.Context(), authorUUID)
+		for _, chirp := range newChirps {
+			chirps = append(chirps, Chirp{
+				ID:        chirp.ID,
+				CreatedAt: chirp.CreatedAt,
+				UpdatedAt: chirp.UpdatedAt,
+				Body:      chirp.Body,
+				UserID:    chirp.UserID,
+			})
+		}
 	}
-	for _, chirp := range newChirps {
-		chirps = append(chirps, Chirp{
-			ID:        chirp.ID,
-			CreatedAt: chirp.CreatedAt,
-			UpdatedAt: chirp.UpdatedAt,
-			Body:      chirp.Body,
-			UserID:    chirp.UserID,
-		})
-	}
+
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/json")
-	if err = json.NewEncoder(w).Encode(chirps); err != nil {
+	if err := json.NewEncoder(w).Encode(chirps); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
 		return
 	}
